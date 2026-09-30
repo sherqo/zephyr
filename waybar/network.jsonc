@@ -1,0 +1,11 @@
+{
+  "network": {
+    "format-icons": ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"],
+    "format": "{icon}",
+    "format-wifi": "{icon}",
+    "format-ethernet": "",
+    "format-disconnected": "󰤮",
+    "interval": 3,
+    "on-click": "xdg-terminal-exec --app-id=org.sherqo.zephyr -- $HOME/zephyr/bin/zephyr"
+  }
+}
