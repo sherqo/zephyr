@@ -1,6 +1,6 @@
 // Zephyr — soft drifting signal (Bubble Tea TUI).
 // Faithful port of Omarchy's network panel: hero with QR/power actions,
-// live throughput, WI-FI BAND pills, DNS rows, KNOWN/OTHER networks.
+// live throughput, WI-FI BAND pills, KNOWN/OTHER networks.
 // Backend is Omarchy's network scripts, byte-identical (see bin/); wifi
 // list/connect goes through nmcli exactly like the panel does.
 // Keys: up/down or j/k move · enter select · f forget · r refresh · q quit.
@@ -101,7 +101,7 @@ type Sel struct {
 	Ref  string // band value / dns name / ssid
 }
 
-// Selectable order: header actions, band pills, dns rows, net rows.
+// Selectable order: header actions, band row, net rows.
 type State struct {
 	Type     string
 	SSID     string
@@ -123,6 +123,7 @@ type State struct {
 	sampleT  float64
 	QR       []string
 	QROpen   bool
+	Password string
 	Prompt   string
 	Input    string
 	Message  string
@@ -162,6 +163,62 @@ func knownProfiles() map[string]bool {
 	return known
 }
 
+func sysfsBytes(iface, dir string) float64 {
+	data, err := os.ReadFile("/sys/class/net/" + iface + "/statistics/" + dir + "_bytes")
+	if err != nil {
+		return -1
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(string(data)), 64)
+	if err != nil {
+		return -1
+	}
+	return v
+}
+
+// snapshotFast refreshes live numbers without a wifi scan: plain status,
+// sysfs byte counters, band script. Lists/pings ride from prev.
+func snapshotFast(prev *State) State {
+	st := *prev
+	f := strings.Fields(sh("omarchy-network-status"))
+	if len(f) >= 4 {
+		st.Type, st.SSID = f[0], f[1]
+		st.Signal, _ = strconv.Atoi(f[2])
+		st.Freq = f[3]
+	}
+	iface := st.iface
+	if iface == "" {
+		for _, line := range strings.Split(sh("nmcli", "-t", "-f", "DEVICE,TYPE", "dev"), "\n") {
+			p := strings.SplitN(strings.TrimSpace(line), ":", 2)
+			if len(p) == 2 && p[1] == "wifi" {
+				iface = p[0]
+				break
+			}
+		}
+		st.iface = iface
+	}
+	if iface != "" {
+		rx, tx := sysfsBytes(iface, "rx"), sysfsBytes(iface, "tx")
+		now := float64(time.Now().UnixNano()) / 1e9
+		if rx >= 0 && tx >= 0 && st.sampleT > 0 {
+			if dt := now - st.sampleT; dt > 0 {
+				st.Down = max(0, (rx-st.rx)/dt)
+				st.Up = max(0, (tx-st.tx)/dt)
+			}
+		}
+		if rx >= 0 && tx >= 0 {
+			st.rx, st.tx, st.sampleT = rx, tx, now
+		}
+	}
+	band := parseKV(sh("omarchy-network-band"))
+	if s := band["selected"]; s != "" {
+		st.Selected = s
+	}
+	if b := band["band"]; b != "" {
+		st.Band = b
+	}
+	return st
+}
+
 func snapshot(prev *State) State {
 	var st State
 	if prev != nil {
@@ -182,7 +239,10 @@ func snapshot(prev *State) State {
 	st.Bitrate = kv["bitrate"]
 	st.RouterMs = kv["router_ping_ms"]
 	st.NetMs = kv["internet_ping_ms"]
-	st.DNS = strings.TrimSpace(sh("omarchy-dns"))
+	if prev != nil {
+		st.Password = prev.Password
+		st.QR, st.QROpen = prev.QR, prev.QROpen
+	}
 	band := parseKV(sh("omarchy-network-band"))
 	st.Selected = band["selected"]
 	if st.Selected == "" {
@@ -389,40 +449,44 @@ func layoutWidths(termW int) (boxW, nameW int) {
 }
 
 type model struct {
-	st     State
-	cursor int
-	width  int
-	height int
-	busy   bool
-	flash  string
+	st         State
+	cursor     int
+	bandCursor int
+	width      int
+	height     int
+	busy       bool
+	flash      string
+	scanTick   int
 }
 
 type refreshMsg State
 type doneMsg string
 
-func doSnapshot(prev *State) tea.Cmd {
+func doSnapshot(prev *State, full bool) tea.Cmd {
 	p := *prev
-	return func() tea.Msg { return refreshMsg(snapshot(&p)) }
+	return func() tea.Msg {
+		if full {
+			return refreshMsg(snapshot(&p))
+		}
+		return refreshMsg(snapshotFast(&p))
+	}
 }
 
+type tickMsg struct{}
+
 func tickRefresh() tea.Cmd {
-	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return nil })
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg{} })
 }
 
 func (m model) Init() tea.Cmd {
 	// paint instantly with empty state; first snapshot lands async
-	return tea.Batch(tickRefresh(), func() tea.Msg { return doSnapshot(&State{}) })
+	return tea.Batch(tickRefresh(), doSnapshot(&State{}, true))
 }
 
 func selsOf(st *State) []Sel {
 	var out []Sel
 	out = append(out, Sel{"header-qr", ""}, Sel{"header-power", ""})
-	for _, b := range st.Bands {
-		out = append(out, Sel{"band", b})
-	}
-	for _, d := range []string{"_dns"} {
-		out = append(out, Sel{"dns", d})
-	}
+	out = append(out, Sel{"band", ""})
 	for _, n := range st.Nets {
 		out = append(out, Sel{"net", n.SSID})
 	}
@@ -478,6 +542,7 @@ func bandLabel(b string) string {
 }
 
 var qrStore []string
+var qrPassword string
 
 func selectRow(m *model, s Sel) tea.Cmd {
 	switch s.Kind {
@@ -510,6 +575,16 @@ func selectRow(m *model, s Sel) tea.Cmd {
 				return doneMsg("no QR available")
 			}
 			qrStore = m_
+			ssid := strings.TrimSpace(sh("nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "connection", "show", "--active"))
+			pw := ""
+			for _, line := range strings.Split(ssid, "\n") {
+				p := strings.SplitN(strings.TrimSpace(line), ":", 3)
+				if len(p) == 3 && strings.Contains(p[1], "wireless") {
+					pw = strings.TrimSpace(sh("nmcli", "-s", "-g", "802-11-wireless-security.psk", "connection", "show", "id", p[0]))
+					break
+				}
+			}
+			qrPassword = pw
 			return doneMsg("QRREADY")
 		}
 	case "header-power":
@@ -529,28 +604,21 @@ func selectRow(m *model, s Sel) tea.Cmd {
 			return doneMsg("Wi-Fi on")
 		}
 	case "band":
+		if len(m.st.Bands) == 0 {
+			return nil
+		}
+		if m.bandCursor < 0 || m.bandCursor >= len(m.st.Bands) {
+			m.bandCursor = 0
+		}
+		target := m.st.Bands[m.bandCursor]
 		m.busy = true
-		m.flash = "pinning band " + bandLabel(s.Ref) + "…"
+		m.flash = "pinning band " + bandLabel(target) + "…"
 		return func() tea.Msg {
-			out := strings.TrimSpace(sh("omarchy-network-band", s.Ref))
+			out := strings.TrimSpace(sh("omarchy-network-band", target))
 			if out == "" {
-				return doneMsg("band → " + bandLabel(s.Ref))
+				return doneMsg("band → " + bandLabel(target))
 			}
 			return doneMsg(shortName(out, 60))
-		}
-	case "dns":
-		// single row; enter or ←/→ cycles DHCP → Cloudflare → Google
-		order := []string{"DHCP", "Cloudflare", "Google"}
-		next := order[0]
-		for i, d := range order {
-			if d == m.st.DNS && i+1 < len(order) {
-				next = order[i+1]
-			}
-		}
-		m.busy = true
-		m.flash = "switching DNS to " + next + "…"
-		return func() tea.Msg {
-			return doneMsg(strings.TrimSpace(sh("omarchy-dns", next)))
 		}
 	case "net":
 		ssid := s.Ref
@@ -583,11 +651,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+	case tickMsg:
+		m.scanTick++
+		full := m.scanTick%8 == 0
+		if m.scanTick >= 10 {
+			m.scanTick = 0
+			go sh("nmcli", "dev", "wifi", "rescan")
+		}
+		prev := m.st
+		return m, func() tea.Msg {
+			if full {
+				return refreshMsg(snapshot(&prev))
+			}
+			return refreshMsg(snapshotFast(&prev))
+		}
 	case refreshMsg:
 		incoming := State(msg)
 		incoming.QR, incoming.QROpen = m.st.QR, m.st.QROpen
+		incoming.Password = m.st.Password
 		incoming.Prompt, incoming.Input = m.st.Prompt, m.st.Input
 		m.st = incoming
+		if m.bandCursor >= len(m.st.Bands) {
+			m.bandCursor = 0
+		}
 		clampCursor(&m, len(selsOf(&m.st)))
 		return m, tickRefresh()
 	case doneMsg:
@@ -596,6 +682,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case s == "QRREADY":
 			m.st.QR = qrStore
+			m.st.Password = qrPassword
 			m.st.QROpen = len(qrStore) > 0
 			m.flash = ""
 			if !m.st.QROpen {
@@ -718,6 +805,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(ss)-1 {
 				m.cursor++
 			}
+		case "left", "h":
+			if m.cursor < len(ss) && ss[m.cursor].Kind == "band" && len(m.st.Bands) > 0 {
+				m.bandCursor--
+				if m.bandCursor < 0 {
+					m.bandCursor = len(m.st.Bands) - 1
+				}
+			}
+		case "right", "l":
+			if m.cursor < len(ss) && ss[m.cursor].Kind == "band" && len(m.st.Bands) > 0 {
+				m.bandCursor++
+				if m.bandCursor >= len(m.st.Bands) {
+					m.bandCursor = 0
+				}
+			}
 		case "enter":
 			if m.cursor < len(ss) && !m.busy {
 				return m, selectRow(&m, ss[m.cursor])
@@ -746,22 +847,6 @@ func (m model) View() string {
 		flash = "  " + lipgloss.NewStyle().Foreground(cYellow).Render("working…")
 	}
 	b.WriteString(flash + "\n\n")
-	// hero: icon, ssid, signal — actions live in the cursor rows below
-	heroName := shortName(m.st.SSID, nameW)
-	if m.st.SSID == "" {
-		heroName = dimSt.Render("disconnected")
-	} else {
-		heroName = activeNm.Render(heroName)
-	}
-	heroLine := fmt.Sprintf("%s %s  %s %d%%", wifiGlyph(m.st.SSID != ""), heroName, sigBar(m.st.Signal, 8), m.st.Signal)
-	detail := formatFreq(m.st.Freq)
-	if m.st.Type == "ethernet" {
-		detail = m.st.Bitrate
-	}
-	if detail != "" {
-		heroLine += dimSt.Render("  " + detail)
-	}
-	b.WriteString(heroLine + "\n")
 	stats := fmt.Sprintf("  ↓ %s  ↑ %s", formatRate(m.st.Down), formatRate(m.st.Up))
 	extra := ""
 	if m.st.Bitrate != "" {

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 )
 
 // vline is one flat content line. text has no cursor marker; row is the
@@ -34,39 +35,54 @@ func buildView(m *model, ss []Sel, nameW int) []vline {
 		case "header-power":
 			row(li, "Wi-Fi: "+map[bool]string{true: "on", false: "off"}[m.st.WifiOn])
 			if m.st.QROpen {
-				for _, ql := range m.st.QR {
+				for i := 0; i < len(m.st.QR); i += 2 {
+					top := m.st.QR[i]
+					bot := ""
+					if i+1 < len(m.st.QR) {
+						bot = m.st.QR[i+1]
+					}
 					var qr strings.Builder
-					for _, ch := range ql {
-						if ch == '1' {
-							qr.WriteString("██")
-						} else {
-							qr.WriteString("  ")
+					n := len(top)
+					if len(bot) > n {
+						n = len(bot)
+					}
+					for c := 0; c < n; c++ {
+						t, b := byte('0'), byte('0')
+						if c < len(top) {
+							t = top[c]
+						}
+						if c < len(bot) {
+							b = bot[c]
+						}
+						switch {
+						case t == '1' && b == '1':
+							qr.WriteString("█")
+						case t == '1':
+							qr.WriteString("▀")
+						case b == '1':
+							qr.WriteString("▄")
+						default:
+							qr.WriteString(" ")
 						}
 					}
 					vl = append(vl, vline{"  " + qr.String(), -1})
 				}
+				if m.st.Password != "" {
+					vl = append(vl, vline{dimSt.Render("  Password: ") + nameSt.Render(m.st.Password), -1})
+				}
 			}
 		case "band":
-			if li == 2 {
-				title := "WI-FI BAND"
-				if m.st.Selected == "auto" && m.st.Band != "" {
-					title = "WI-FI BAND: " + strings.ToUpper(m.st.Band) + "GHZ"
-				}
-				head(title)
+			title := "WI-FI BAND"
+			if m.st.Selected == "auto" && m.st.Band != "" {
+				title = "WI-FI BAND: " + strings.ToUpper(m.st.Band) + "GHZ"
 			}
-			pill := pillOff.Render(bandLabel(r.Ref))
-			if m.st.Selected == r.Ref {
-				pill = pillOn.Render(bandLabel(r.Ref))
-			}
-			row(li, "  "+pill)
-		case "dns":
-			head("DNS")
+			head(title)
 			var pills []string
-			for _, d := range []string{"DHCP", "Cloudflare", "Google"} {
-				if m.st.DNS == d {
-					pills = append(pills, pillOn.Render(d))
+			for bi, b := range m.st.Bands {
+				if bi == m.bandCursor {
+					pills = append(pills, pillOn.Render(bandLabel(b)))
 				} else {
-					pills = append(pills, pillOff.Render(d))
+					pills = append(pills, pillOff.Render(bandLabel(b)))
 				}
 			}
 			row(li, "  "+strings.Join(pills, " "))
@@ -86,7 +102,7 @@ func buildView(m *model, ss []Sel, nameW int) []vline {
 				} else {
 					vl = append(vl, vline{"", -1}, vline{headSt.Render("OTHER NETWORKS"), -1})
 				}
-				colHead := fmt.Sprintf("  %-*s  SIGNAL", nameW+2, "NETWORK")
+				colHead := "  " + cell("NETWORK", nameW+2) + "  SIGNAL"
 				vl = append(vl, vline{lipgloss.NewStyle().Foreground(cYellow).Bold(true).Render(colHead), -1})
 			} else if n.Known != lastKnown {
 				lastKnown = n.Known
@@ -100,7 +116,7 @@ func buildView(m *model, ss []Sel, nameW int) []vline {
 			if n.Security != "" && n.Security != "--" {
 				sec = " " + lockGlyph()
 			}
-			nm := shortName(n.SSID, nameW)
+			nm := cell(n.SSID, nameW)
 			if n.Active {
 				nm = activeNm.Render(nm)
 			}
@@ -110,8 +126,12 @@ func buildView(m *model, ss []Sel, nameW int) []vline {
 	return vl
 }
 
-// rowAtY maps a terminal line to a selsOf index through the same flat
-// list View renders. Header block occupies lines 2..5, content from 6.
+// cell returns s truncated and padded to exactly w terminal cells,
+// so columns align regardless of wide/ambiguous runes in SSIDs.
+func cell(s string, w int) string {
+	s = runewidth.Truncate(s, w, "…")
+	return runewidth.FillRight(s, w)
+}
 func rowAtY(m *model, ss []Sel, termW, termH, cursor, y int) int {
 	_, nameW := layoutWidths(termW)
 	vl := buildView(m, ss, nameW)
@@ -124,7 +144,7 @@ func rowAtY(m *model, ss []Sel, termW, termH, cursor, y int) int {
 		}
 	}
 	start := windowStart(len(vl), cpos, maxH)
-	pos := start + (y - 6)
+	pos := start + (y - 7)
 	if pos < start || pos >= start+maxH || pos < 0 || pos >= len(vl) {
 		return -1
 	}
