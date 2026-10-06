@@ -63,11 +63,11 @@ func buildView(m *model, ss []Sel, nameW int) []vline {
 			if li == 2+len(m.st.Bands) {
 				head("DNS")
 			}
-			dot := ""
+			dnsName := r.Ref
 			if m.st.DNS == r.Ref {
-				dot = lipgloss.NewStyle().Foreground(cAccent).Render(" ●")
+				dnsName = activeNm.Render(r.Ref)
 			}
-			row(li, "  "+r.Ref+dot)
+			row(li, "  "+dnsName)
 		case "net":
 			var n Network
 			for _, nn := range m.st.Nets {
@@ -76,8 +76,17 @@ func buildView(m *model, ss []Sel, nameW int) []vline {
 					break
 				}
 			}
-			if !startedNet || n.Known != lastKnown {
+			if !startedNet {
 				startedNet = true
+				lastKnown = n.Known
+				if n.Known {
+					vl = append(vl, vline{"", -1}, vline{headSt.Render("KNOWN NETWORKS"), -1})
+				} else {
+					vl = append(vl, vline{"", -1}, vline{headSt.Render("OTHER NETWORKS"), -1})
+				}
+				colHead := fmt.Sprintf("  %-*s  SIGNAL", nameW+2, "NETWORK")
+				vl = append(vl, vline{lipgloss.NewStyle().Foreground(cYellow).Bold(true).Render(colHead), -1})
+			} else if n.Known != lastKnown {
 				lastKnown = n.Known
 				if n.Known {
 					head("KNOWN NETWORKS")
