@@ -838,7 +838,6 @@ func (m model) View() string {
 	}
 	boxW, nameW := layoutWidths(m.width)
 	var b strings.Builder
-	b.WriteString(titleSt.Render(" Zephyr ") + "\n")
 	flash := " "
 	if m.flash != "" {
 		flash = "  " + lipgloss.NewStyle().Foreground(cBlue).Render(m.flash)
