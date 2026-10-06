@@ -35,6 +35,9 @@ func buildView(m *model, ss []Sel, nameW int) []vline {
 		case "header-power":
 			row(li, "Wi-Fi: "+map[bool]string{true: "on", false: "off"}[m.st.WifiOn])
 			if m.st.QROpen {
+				if m.st.Password != "" {
+					vl = append(vl, vline{dimSt.Render("  Password: ") + nameSt.Render(m.st.Password), -1})
+				}
 				for i := 0; i < len(m.st.QR); i += 2 {
 					top := m.st.QR[i]
 					bot := ""
@@ -66,9 +69,6 @@ func buildView(m *model, ss []Sel, nameW int) []vline {
 						}
 					}
 					vl = append(vl, vline{"  " + qr.String(), -1})
-				}
-				if m.st.Password != "" {
-					vl = append(vl, vline{dimSt.Render("  Password: ") + nameSt.Render(m.st.Password), -1})
 				}
 			}
 		case "band":
