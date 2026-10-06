@@ -838,8 +838,7 @@ func (m model) View() string {
 	}
 	boxW, nameW := layoutWidths(m.width)
 	var b strings.Builder
-	b.WriteString(titleSt.Render(" Zephyr ") + " " + helpSt.Render("enter select · f forget · r refresh · q quit") + "\n")
-	b.WriteString(helpSt.Render("  click select · wheel move") + "\n")
+	b.WriteString(titleSt.Render(" Zephyr ") + "\n")
 	flash := " "
 	if m.flash != "" {
 		flash = "  " + lipgloss.NewStyle().Foreground(cBlue).Render(m.flash)
@@ -847,16 +846,16 @@ func (m model) View() string {
 		flash = "  " + lipgloss.NewStyle().Foreground(cYellow).Render("working…")
 	}
 	b.WriteString(flash + "\n\n")
-	stats := fmt.Sprintf("  ↓ %s  ↑ %s", formatRate(m.st.Down), formatRate(m.st.Up))
+	stats := fmt.Sprintf("  ↓%s ↑%s", formatRate(m.st.Down), formatRate(m.st.Up))
 	extra := ""
 	if m.st.Bitrate != "" {
-		extra += "  ·  " + m.st.Bitrate
+		extra += " · " + m.st.Bitrate
 	}
 	if m.st.RouterMs != "" {
-		extra += "  ·  router " + formatMs(m.st.RouterMs)
+		extra += " · " + formatMs(m.st.RouterMs)
 	}
 	if m.st.NetMs != "" {
-		extra += "  ·  net " + formatMs(m.st.NetMs)
+		extra += " · " + formatMs(m.st.NetMs)
 	}
 	b.WriteString(dimSt.Render(stats+extra) + "\n")
 	// ---- one flat list drives render AND mouse mapping ----

@@ -144,7 +144,7 @@ func rowAtY(m *model, ss []Sel, termW, termH, cursor, y int) int {
 		}
 	}
 	start := windowStart(len(vl), cpos, maxH)
-	pos := start + (y - 7)
+	pos := start + (y - 6)
 	if pos < start || pos >= start+maxH || pos < 0 || pos >= len(vl) {
 		return -1
 	}
