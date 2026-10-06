@@ -60,14 +60,16 @@ func buildView(m *model, ss []Sel, nameW int) []vline {
 			}
 			row(li, "  "+pill)
 		case "dns":
-			if li == 2+len(m.st.Bands) {
-				head("DNS")
+			head("DNS")
+			var pills []string
+			for _, d := range []string{"DHCP", "Cloudflare", "Google"} {
+				if m.st.DNS == d {
+					pills = append(pills, pillOn.Render(d))
+				} else {
+					pills = append(pills, pillOff.Render(d))
+				}
 			}
-			dnsName := r.Ref
-			if m.st.DNS == r.Ref {
-				dnsName = activeNm.Render(r.Ref)
-			}
-			row(li, "  "+dnsName)
+			row(li, "  "+strings.Join(pills, " "))
 		case "net":
 			var n Network
 			for _, nn := range m.st.Nets {

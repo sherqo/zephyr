@@ -409,7 +409,10 @@ func tickRefresh() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return nil })
 }
 
-func (m model) Init() tea.Cmd { return tickRefresh() }
+func (m model) Init() tea.Cmd {
+	// paint instantly with empty state; first snapshot lands async
+	return tea.Batch(tickRefresh(), func() tea.Msg { return doSnapshot(&State{}) })
+}
 
 func selsOf(st *State) []Sel {
 	var out []Sel
@@ -417,7 +420,7 @@ func selsOf(st *State) []Sel {
 	for _, b := range st.Bands {
 		out = append(out, Sel{"band", b})
 	}
-	for _, d := range []string{"DHCP", "Cloudflare", "Google"} {
+	for _, d := range []string{"_dns"} {
 		out = append(out, Sel{"dns", d})
 	}
 	for _, n := range st.Nets {
@@ -536,10 +539,18 @@ func selectRow(m *model, s Sel) tea.Cmd {
 			return doneMsg(shortName(out, 60))
 		}
 	case "dns":
+		// single row; enter or ←/→ cycles DHCP → Cloudflare → Google
+		order := []string{"DHCP", "Cloudflare", "Google"}
+		next := order[0]
+		for i, d := range order {
+			if d == m.st.DNS && i+1 < len(order) {
+				next = order[i+1]
+			}
+		}
 		m.busy = true
-		m.flash = "switching DNS to " + s.Ref + "…"
+		m.flash = "switching DNS to " + next + "…"
 		return func() tea.Msg {
-			return doneMsg(strings.TrimSpace(sh("omarchy-dns", s.Ref)))
+			return doneMsg(strings.TrimSpace(sh("omarchy-dns", next)))
 		}
 	case "net":
 		ssid := s.Ref
@@ -809,7 +820,7 @@ func main() {
 		}
 		return
 	}
-	prev := snapshot(nil)
+	prev := State{}
 	m := model{st: prev, cursor: 2}
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
