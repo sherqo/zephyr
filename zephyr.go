@@ -37,7 +37,7 @@ var (
 	dimSt    = lipgloss.NewStyle().Foreground(cMuted)
 	selSt    = lipgloss.NewStyle().Foreground(cFg).Background(lipgloss.Color("#3A3048")).Bold(true)
 	headSt   = lipgloss.NewStyle().Foreground(cFg).Bold(true)
-	boxSt    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cMuted).Padding(1, 2).Background(cBg)
+	boxSt    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cMuted).Padding(0, 2, 1, 2).Background(cBg)
 	helpSt   = lipgloss.NewStyle().Foreground(cMuted)
 	activeNm = lipgloss.NewStyle().Foreground(cAccent).Bold(true)
 	pillOn   = lipgloss.NewStyle().Foreground(cBg).Background(cAccent).Bold(true).Padding(0, 1)
@@ -844,7 +844,7 @@ func (m model) View() string {
 	} else if m.busy {
 		flash = "  " + lipgloss.NewStyle().Foreground(cYellow).Render("working…")
 	}
-	b.WriteString(flash + "\n\n")
+	b.WriteString(flash + "\n")
 	stats := fmt.Sprintf("  ↓%s ↑%s", formatRate(m.st.Down), formatRate(m.st.Up))
 	extra := ""
 	if m.st.Bitrate != "" {
